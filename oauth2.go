@@ -168,7 +168,7 @@ func ParseRefreshRequest(params url.Values, options ...Options) (refreshToken st
 	}
 
 	refreshToken = params.Get("refresh_token")
-	if grantType == "" {
+	if refreshToken == "" {
 		err = errors.New("Missing refresh_token param")
 		return
 	}
