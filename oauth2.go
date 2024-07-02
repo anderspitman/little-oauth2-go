@@ -8,7 +8,7 @@ import (
 	"golang.org/x/oauth2"
 )
 
-type AuthorizationRequest struct {
+type AuthRequest struct {
 	ClientId      string `json:"client_id"`
 	RedirectUri   string `json:"redirect_uri"`
 	Scope         string `json:"scope"`
@@ -32,7 +32,7 @@ func DecodeAuthRequestState(str string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
-func ParseAuthRequest(params url.Values, options ...Options) (*AuthorizationRequest, error) {
+func ParseAuthRequest(params url.Values, options ...Options) (*AuthRequest, error) {
 
 	var opt Options
 	if len(options) > 0 {
@@ -54,7 +54,7 @@ func ParseAuthRequest(params url.Values, options ...Options) (*AuthorizationRequ
 		return nil, errors.New("Missing code_challenge param")
 	}
 
-	req := &AuthorizationRequest{
+	req := &AuthRequest{
 		ClientId:      clientId,
 		RedirectUri:   redirectUri,
 		Scope:         params.Get("scope"),
