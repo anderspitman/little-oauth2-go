@@ -16,6 +16,13 @@ type AuthRequest struct {
 	CodeChallenge string `json:"code_challenge"`
 }
 
+type TokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	RefreshToken string `json:"refresh_token"`
+}
+
 type Options struct {
 	AllowMissingPkce bool
 }
@@ -88,7 +95,12 @@ func ParseTokenRequest(tokenReqParams url.Values, authReqState string, options .
 		return
 	}
 
+	// https://datatracker.ietf.org/doc/html/rfc6749#section-4.1.3
 	grantType := tokenReqParams.Get("grant_type")
+	if grantType == "" {
+		err = errors.New("Missing grant_type param")
+		return
+	}
 
 	if grantType != "authorization_code" {
 		err = errors.New("Invalid grant_type param")
@@ -132,6 +144,34 @@ func ParseTokenRequest(tokenReqParams url.Values, authReqState string, options .
 	}
 
 	token = tok
+
+	return
+}
+
+func ParseRefreshRequest(params url.Values, options ...Options) (refreshToken string, err error) {
+
+	//var opt Options
+	//if len(options) > 0 {
+	//	opt = options[0]
+	//}
+
+	// https://datatracker.ietf.org/doc/html/rfc6749#section-4.1.3
+	grantType := params.Get("grant_type")
+	if grantType == "" {
+		err = errors.New("Missing grant_type param")
+		return
+	}
+
+	if grantType != "refresh_token" {
+		err = errors.New("Invalid grant_type param")
+		return
+	}
+
+	refreshToken = params.Get("refresh_token")
+	if grantType == "" {
+		err = errors.New("Missing refresh_token param")
+		return
+	}
 
 	return
 }
