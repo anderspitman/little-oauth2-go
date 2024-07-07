@@ -8,6 +8,23 @@ import (
 	"golang.org/x/oauth2"
 )
 
+type AuthServerMetadata struct {
+	Issuer                            string   `json:"issuer,omitempty"`
+	AuthorizationEndpoint             string   `json:"authorization_endpoint,omitempty"`
+	TokenEndpoint                     string   `json:"token_endpoint,omitempty"`
+	UserinfoEndpoint                  string   `json:"userinfo_endpoint,omitempty"`
+	JwksUri                           string   `json:"jwks_uri,omitempty"`
+	ScopesSupported                   []string `json:"scopes_supported,omitempty"`
+	ResponseTypesSupported            []string `json:"response_types_supported,omitempty"`
+	IdTokenSigningAlgValuesSupported  []string `json:"id_token_signing_alg_values_supported,omitempty"`
+	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported"`
+	SubjectTypesSupported             []string `json:"subject_types_supported"`
+	RegistrationEndpoint              string   `json:"registration_endpoint"`
+	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
+	IntrospectionEndpoint             string   `json:"introspection_endpoint,omitempty"`
+	EndSessionEndpoint                string   `json:"end_session_endpoint"`
+}
+
 type AuthRequest struct {
 	ClientId      string `json:"client_id"`
 	RedirectUri   string `json:"redirect_uri"`
