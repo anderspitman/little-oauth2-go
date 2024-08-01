@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/url"
 	"strings"
+	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -191,4 +192,11 @@ func ParseRefreshRequest(params url.Values, options ...Options) (refreshToken st
 	}
 
 	return
+}
+
+func Expired(issuedAt time.Time, expiresIn int) bool {
+	now := time.Now().UTC()
+	expiresInDur := time.Duration(expiresIn) * time.Second
+	expiresTime := issuedAt.Add(expiresInDur)
+	return now.After(expiresTime)
 }
