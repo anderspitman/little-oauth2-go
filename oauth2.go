@@ -1,12 +1,15 @@
 package littleoauth2
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"math/big"
 	"net/url"
 	"strings"
 	"time"
-
-	"golang.org/x/oauth2"
 )
 
 type AuthServerMetadata struct {
@@ -27,6 +30,7 @@ type AuthServerMetadata struct {
 }
 
 type AuthRequest struct {
+	ResponseType  string `json:"response_type"`
 	ClientId      string `json:"client_id"`
 	RedirectUri   string `json:"redirect_uri"`
 	Scope         string `json:"scope"`
@@ -39,6 +43,12 @@ type TokenResponse struct {
 	TokenType    string `json:"token_type"`
 	ExpiresIn    int    `json:"expires_in"`
 	RefreshToken string `json:"refresh_token"`
+}
+
+type AuthCodeFlowState struct {
+	AuthUri      string
+	State        string
+	PKCEVerifier string
 }
 
 type Options struct {
@@ -77,6 +87,11 @@ func ParseAuthRequest(params url.Values, options ...Options) (*AuthRequest, erro
 	codeChallenge := params.Get("code_challenge")
 	if codeChallenge == "" && !opt.AllowMissingPkce {
 		return nil, errors.New("Missing code_challenge param")
+	}
+
+	codeChallengeMethod := params.Get("code_challenge_method")
+	if codeChallengeMethod != "S256" && !opt.AllowMissingPkce {
+		return nil, errors.New("Invalid code_challenge_method param")
 	}
 
 	req := &AuthRequest{
@@ -153,7 +168,7 @@ func ParseTokenRequest(tokenReqParams url.Values, authReqState string, options .
 			return
 		}
 
-		codeChallenge := oauth2.S256ChallengeFromVerifier(codeVerifier)
+		codeChallenge := PKCEChallengeFromVerifier(codeVerifier)
 
 		if codeChallenge != authReq.CodeChallenge {
 			err = errors.New("Mismatched code_challenge")
@@ -194,9 +209,82 @@ func ParseRefreshRequest(params url.Values, options ...Options) (refreshToken st
 	return
 }
 
+func StartAuthCodeFlow(serverUri string, authReq *AuthRequest) (flowState *AuthCodeFlowState, err error) {
+
+	ar := *authReq
+
+	flowState = &AuthCodeFlowState{}
+
+	if ar.ResponseType == "" {
+		ar.ResponseType = "code"
+	}
+
+	if ar.State == "" {
+		ar.State, err = genRandomText(32)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if ar.CodeChallenge == "" {
+		flowState.PKCEVerifier, err = PKCEGenerateVerifier()
+		if err != nil {
+			return nil, err
+		}
+
+		ar.CodeChallenge = PKCEChallengeFromVerifier(flowState.PKCEVerifier)
+	}
+
+	if ar.RedirectUri == "" {
+		// TODO: start server
+		return nil, errors.New("RedirectUri required")
+	}
+
+	flowState.AuthUri = fmt.Sprintf("%s?client_id=%s&redirect_uri=%s&response_type=%s&scope=%s&state=%s&code_challenge_method=S256&code_challenge=%s",
+		serverUri, ar.ClientId, ar.RedirectUri, ar.ResponseType, ar.Scope, ar.State, ar.CodeChallenge)
+	flowState.State = ar.State
+
+	return
+}
+
 func Expired(issuedAt time.Time, expiresIn int) bool {
 	now := time.Now().UTC()
 	expiresInDur := time.Duration(expiresIn) * time.Second
 	expiresTime := issuedAt.Add(expiresInDur)
 	return now.After(expiresTime)
+}
+
+const chars string = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+func genRandomText(length int) (string, error) {
+	id := ""
+	for i := 0; i < length; i++ {
+		randIndex, err := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
+		if err != nil {
+			return "", err
+		}
+		id += string(chars[randIndex.Int64()])
+	}
+	return id, nil
+}
+
+// PKCE code copied from go/x/oauth2
+func PKCEGenerateVerifier() (string, error) {
+	// "RECOMMENDED that the output of a suitable random number generator be
+	// used to create a 32-octet sequence.  The octet sequence is then
+	// base64url-encoded to produce a 43-octet URL-safe string to use as the
+	// code verifier."
+	// https://datatracker.ietf.org/doc/html/rfc7636#section-4.1
+	data := make([]byte, 32)
+	if _, err := rand.Read(data); err != nil {
+		return "", err
+	}
+	str := base64.RawURLEncoding.EncodeToString(data)
+
+	return str, nil
+}
+
+func PKCEChallengeFromVerifier(verifier string) string {
+	sha := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sha[:])
 }
