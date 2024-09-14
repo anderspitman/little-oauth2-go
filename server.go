@@ -129,7 +129,6 @@ func (s *Server) HandleDeviceFlow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) HandleToken(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("/token")
 
 	r.ParseForm()
 
