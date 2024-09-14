@@ -5,12 +5,17 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"math/big"
 	"net/url"
 	"strings"
 	"time"
 )
+
+type KeyValueStore interface {
+	Set(key string, value []byte) error
+	Get(key string) ([]byte, error)
+	Delete(key string) error
+}
 
 type AuthServerMetadata struct {
 	Issuer                            string   `json:"issuer,omitempty"`
@@ -38,6 +43,14 @@ type AuthRequest struct {
 	CodeChallenge string `json:"code_challenge"`
 }
 
+type TokenRequest struct {
+	GrantType    string
+	Code         string
+	RedirectUri  string
+	CodeVerifier string
+	ClientId     string
+}
+
 type TokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	TokenType    string `json:"token_type"`
@@ -45,10 +58,14 @@ type TokenResponse struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-type AuthCodeFlowState struct {
-	AuthUri      string
-	State        string
-	PKCEVerifier string
+// https://datatracker.ietf.org/doc/html/rfc8628#section-3.2
+type DeviceAuthResponse struct {
+	DeviceCode              string `json:"device_code"`
+	UserCode                string `json:"user_code"`
+	VerificationUri         string `json:"verification_uri"`
+	VerificationUriComplete string `json:"verification_uri_complete"`
+	ExpiresIn               int    `json:"expires_in"`
+	Interval                int    `json:"interval"`
 }
 
 type Options struct {
@@ -105,8 +122,76 @@ func ParseAuthRequest(params url.Values, options ...Options) (*AuthRequest, erro
 	return req, nil
 }
 
+func ParseTokenRequest(tokenReqParams url.Values, options ...Options) (req *TokenRequest, err error) {
+
+	var opt Options
+	if len(options) > 0 {
+		opt = options[0]
+	}
+
+	// https://datatracker.ietf.org/doc/html/rfc6749#section-4.1.3
+	grantType := tokenReqParams.Get("grant_type")
+	if grantType == "" {
+		err = errors.New("Missing grant_type param")
+		return
+	}
+
+	code := tokenReqParams.Get("code")
+	redirectUri := tokenReqParams.Get("redirect_uri")
+	deviceCode := tokenReqParams.Get("device_code")
+	codeVerifier := tokenReqParams.Get("code_verifier")
+
+	clientId := tokenReqParams.Get("client_id")
+	if clientId == "" {
+		err = errors.New("Missing client_id param")
+		return
+	}
+
+	switch grantType {
+	case "authorization_code":
+
+		if code == "" {
+			err = errors.New("Missing code param")
+			return
+		}
+
+		if redirectUri == "" {
+			err = errors.New("Missing redirect_uri param")
+			return
+		}
+
+		if !opt.AllowMissingPkce {
+			if codeVerifier == "" {
+				err = errors.New("Missing code_verifier param")
+				return
+			}
+		}
+
+	case "urn:ietf:params:oauth:grant-type:device_code":
+
+		if deviceCode == "" {
+			err = errors.New("Missing device_code param")
+			return
+		}
+
+	default:
+		err = errors.New("Invalid grant_type param")
+		return
+	}
+
+	req = &TokenRequest{
+		Code:         code,
+		GrantType:    grantType,
+		RedirectUri:  redirectUri,
+		CodeVerifier: codeVerifier,
+		ClientId:     clientId,
+	}
+
+	return
+}
+
 // TODO: See if we can pack options into AuthRequestState
-func ParseTokenRequest(tokenReqParams url.Values, authReqState string, options ...Options) (token string, err error) {
+func VerifyTokenRequest(tokenReqParams url.Values, authReqState string, options ...Options) (token string, err error) {
 
 	var opt Options
 	if len(options) > 0 {
@@ -209,40 +294,31 @@ func ParseRefreshRequest(params url.Values, options ...Options) (refreshToken st
 	return
 }
 
-func StartAuthCodeFlow(serverUri string, authReq *AuthRequest) (flowState *AuthCodeFlowState, err error) {
+func ParseDeviceTokenRequest(tokenReqParams url.Values) (deviceCode string, err error) {
 
-	ar := *authReq
-
-	flowState = &AuthCodeFlowState{}
-
-	if ar.ResponseType == "" {
-		ar.ResponseType = "code"
+	// https://datatracker.ietf.org/doc/html/rfc6749#section-4.1.3
+	grantType := tokenReqParams.Get("grant_type")
+	if grantType == "" {
+		err = errors.New("Missing grant_type param")
+		return
 	}
 
-	if ar.State == "" {
-		ar.State, err = genRandomText(32)
-		if err != nil {
-			return nil, err
-		}
+	if grantType != "urn:ietf:params:oauth:grant-type:device_code" {
+		err = errors.New("Invalid grant_type param")
+		return
 	}
 
-	if ar.CodeChallenge == "" {
-		flowState.PKCEVerifier, err = PKCEGenerateVerifier()
-		if err != nil {
-			return nil, err
-		}
-
-		ar.CodeChallenge = PKCEChallengeFromVerifier(flowState.PKCEVerifier)
+	clientId := tokenReqParams.Get("client_id")
+	if clientId == "" {
+		err = errors.New("Missing client_id param")
+		return
 	}
 
-	if ar.RedirectUri == "" {
-		// TODO: start server
-		return nil, errors.New("RedirectUri required")
+	deviceCode = tokenReqParams.Get("device_code")
+	if deviceCode == "" {
+		err = errors.New("Missing device_code param")
+		return
 	}
-
-	flowState.AuthUri = fmt.Sprintf("%s?client_id=%s&redirect_uri=%s&response_type=%s&scope=%s&state=%s&code_challenge_method=S256&code_challenge=%s",
-		serverUri, ar.ClientId, ar.RedirectUri, ar.ResponseType, ar.Scope, ar.State, ar.CodeChallenge)
-	flowState.State = ar.State
 
 	return
 }
@@ -260,6 +336,20 @@ func genRandomText(length int) (string, error) {
 	id := ""
 	for i := 0; i < length; i++ {
 		randIndex, err := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
+		if err != nil {
+			return "", err
+		}
+		id += string(chars[randIndex.Int64()])
+	}
+	return id, nil
+}
+
+const codeChars string = "0123456789"
+
+func genRandomCode(length int) (string, error) {
+	id := ""
+	for i := 0; i < length; i++ {
+		randIndex, err := rand.Int(rand.Reader, big.NewInt(int64(len(codeChars))))
 		if err != nil {
 			return "", err
 		}
