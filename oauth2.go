@@ -35,12 +35,12 @@ type AuthServerMetadata struct {
 }
 
 type AuthRequest struct {
-	ResponseType  string `json:"response_type"`
-	ClientId      string `json:"client_id"`
-	RedirectUri   string `json:"redirect_uri"`
-	Scope         string `json:"scope"`
-	State         string `json:"state"`
-	CodeChallenge string `json:"code_challenge"`
+	ResponseType  string   `json:"response_type"`
+	ClientId      string   `json:"client_id"`
+	RedirectUri   string   `json:"redirect_uri"`
+	Scopes        []string `json:"scopes"`
+	State         string   `json:"state"`
+	CodeChallenge string   `json:"code_challenge"`
 }
 
 type TokenRequest struct {
@@ -111,10 +111,12 @@ func ParseAuthRequest(params url.Values, options ...Options) (*AuthRequest, erro
 		return nil, errors.New("Invalid code_challenge_method param")
 	}
 
+	scopes := strings.Split(params.Get("scope"), " ")
+
 	req := &AuthRequest{
 		ClientId:      clientId,
 		RedirectUri:   redirectUri,
-		Scope:         params.Get("scope"),
+		Scopes:        scopes,
 		State:         params.Get("state"),
 		CodeChallenge: codeChallenge,
 	}

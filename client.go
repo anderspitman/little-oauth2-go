@@ -17,6 +17,7 @@ type DeviceFlow struct {
 
 type AuthCodeFlowState struct {
 	AuthUri      string
+	RedirectUri  string `json:"redirect_uri"`
 	State        string
 	CodeVerifier string
 }
@@ -55,7 +56,22 @@ func (f *DeviceFlow) Complete(uri string) (*TokenResponse, error) {
 	return tokenRes, nil
 }
 
-func MakeTokenRequest(authServerUri string, tokenReq *TokenRequest) (tokenRes *TokenResponse, err error) {
+func MakeTokenRequest(tokenUri string, tokenReq *TokenRequest) (tokenRes *TokenResponse, err error) {
+
+	resBytes, err := MakeTokenRequestRaw(tokenUri, tokenReq)
+	if err != nil {
+		return nil, err
+	}
+
+	err = json.Unmarshal(resBytes, &tokenRes)
+	if err != nil {
+		return
+	}
+
+	return
+}
+
+func MakeTokenRequestRaw(tokenUri string, tokenReq *TokenRequest) (bodyBytes []byte, err error) {
 
 	httpClient := &http.Client{}
 
@@ -66,8 +82,6 @@ func MakeTokenRequest(authServerUri string, tokenReq *TokenRequest) (tokenRes *T
 	params.Set("redirect_uri", tokenReq.RedirectUri)
 	params.Set("code_verifier", tokenReq.CodeVerifier)
 	body := strings.NewReader(params.Encode())
-
-	tokenUri := fmt.Sprintf("%s/token", authServerUri)
 
 	var req *http.Request
 	req, err = http.NewRequest(http.MethodPost, tokenUri, body)
@@ -83,19 +97,13 @@ func MakeTokenRequest(authServerUri string, tokenReq *TokenRequest) (tokenRes *T
 		return
 	}
 
-	var bodyBytes []byte
 	bodyBytes, err = io.ReadAll(res.Body)
 	if err != nil {
 		return
 	}
 
 	if res.StatusCode != 200 {
-		err = errors.New(string(bodyBytes))
-		return
-	}
-
-	err = json.Unmarshal(bodyBytes, &tokenRes)
-	if err != nil {
+		err = fmt.Errorf("MakeTokenRequestRaw: invalid status code: %s", string(bodyBytes))
 		return
 	}
 
@@ -106,7 +114,9 @@ func StartAuthCodeFlow(serverUri string, authReq *AuthRequest) (flowState *AuthC
 
 	ar := *authReq
 
-	flowState = &AuthCodeFlowState{}
+	flowState = &AuthCodeFlowState{
+		RedirectUri: ar.RedirectUri,
+	}
 
 	if ar.ResponseType == "" {
 		ar.ResponseType = "code"
@@ -133,11 +143,32 @@ func StartAuthCodeFlow(serverUri string, authReq *AuthRequest) (flowState *AuthC
 		return nil, errors.New("RedirectUri required")
 	}
 
+	if ar.ClientId == "" {
+		ar.ClientId = ar.RedirectUri
+	}
+
+	scope := encodeScopeParam(ar.Scopes)
+
 	flowState.AuthUri = fmt.Sprintf("%s?client_id=%s&redirect_uri=%s&response_type=%s&scope=%s&state=%s&code_challenge_method=S256&code_challenge=%s",
-		serverUri, ar.ClientId, ar.RedirectUri, ar.ResponseType, ar.Scope, ar.State, ar.CodeChallenge)
+		serverUri, ar.ClientId, ar.RedirectUri, ar.ResponseType, scope, ar.State, ar.CodeChallenge)
 	flowState.State = ar.State
 
 	return
+}
+
+func CompleteAuthCodeFlow(serverUri, code, state string, flowState *AuthCodeFlowState) ([]byte, error) {
+
+	if state != flowState.State {
+		return nil, fmt.Errorf("State %s does not match expected", state, flowState.State)
+	}
+
+	tokenReq := &TokenRequest{
+		Code:         code,
+		RedirectUri:  flowState.RedirectUri,
+		CodeVerifier: flowState.CodeVerifier,
+	}
+
+	return MakeTokenRequestRaw(serverUri, tokenReq)
 }
 
 func StartDeviceFlow(uri string, authReq *AuthRequest) (flow *DeviceFlow, err error) {
@@ -145,7 +176,8 @@ func StartDeviceFlow(uri string, authReq *AuthRequest) (flow *DeviceFlow, err er
 	params := url.Values{}
 
 	params.Set("client_id", authReq.ClientId)
-	params.Set("scope", authReq.Scope)
+	scope := encodeScopeParam(authReq.Scopes)
+	params.Set("scope", scope)
 
 	var res *http.Response
 	res, err = http.PostForm(uri, params)
@@ -177,4 +209,8 @@ func StartDeviceFlow(uri string, authReq *AuthRequest) (flow *DeviceFlow, err er
 	}
 
 	return
+}
+
+func encodeScopeParam(scopes []string) string {
+	return url.QueryEscape(strings.Join(scopes, " "))
 }
