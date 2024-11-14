@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"math/big"
 	"net/url"
@@ -379,4 +380,29 @@ func PKCEGenerateVerifier() (string, error) {
 func PKCEChallengeFromVerifier(verifier string) string {
 	sha := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(sha[:])
+}
+
+// This function is marked unsafe because it doesn't verify JWT signatures.
+// It's only safe to use if you know the JWT is valid, ie if your backend
+// got it directly from the source over HTTPS.
+func UnsafeParseJwt(jwt string, output any) (err error) {
+	parts := strings.Split(jwt, ".")
+
+	if len(parts) != 3 {
+		err = errors.New("Invalid JWT")
+		return
+	}
+
+	bytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		err = errors.New("Failed decoding JWT claims")
+		return
+	}
+
+	err = json.Unmarshal(bytes, output)
+	if err != nil {
+		return
+	}
+
+	return
 }
